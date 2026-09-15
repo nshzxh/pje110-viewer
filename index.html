@@ -109,6 +109,19 @@ var CONFIG = {
   PASSWORD_HASH: "7a07041cc2aa7654ee4623a8f7a3b7f8ebd3ada6371c483eaa28c65c4a8cf644"
 };
 
+/* ---------------- URL 参数覆盖（供 parent_viewer_app 注入配置） ----------------
+ * 用法：?amap_key=xxx&amap_sec=xxx&gist_raw=xxx&gist_api=xxx&pw_hash=xxx&poll=5000
+ * 任意参数缺省则沿用上方默认值；未填任何参数时行为与之前完全一致。 */
+(function () {
+  var q = new URLSearchParams(location.search);
+  if (q.has("amap_key")) CONFIG.AMAP_KEY = q.get("amap_key");
+  if (q.has("amap_sec")) CONFIG.AMAP_SECURITY_CODE = q.get("amap_sec");
+  if (q.has("gist_raw")) CONFIG.GIST_RAW_URL = q.get("gist_raw");
+  if (q.has("gist_api")) CONFIG.GIST_API_URL = q.get("gist_api");
+  if (q.has("pw_hash")) CONFIG.PASSWORD_HASH = q.get("pw_hash");
+  if (q.has("poll")) CONFIG.POLL_MS = parseInt(q.get("poll"), 10) || CONFIG.POLL_MS;
+})();
+
 /* ---------------- 密码锁 ---------------- */
 var unlocked = sessionStorage.getItem("opsec_unlocked") === "1";
 if (!CONFIG.PASSWORD_HASH) unlocked = true;
