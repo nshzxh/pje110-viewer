@@ -97,7 +97,7 @@ html,body{height:100%;background:var(--bg);color:var(--txt);
  *   2) GIST_RAW_URL —— 公开 Gist 的 position.json 直链（推荐，轻量）
  *   3) GIST_API_URL —— 兜底：GitHub API（gistId 部分）
  *   4) PASSWORD_HASH —— sha256(密码)，留空则关闭密码锁
- *      默认密码 pje110，其哈希已预置
+ *      默认密码 215331，其哈希已预置
  * ============================================================ */
 var CONFIG = {
   AMAP_KEY: "",                    // 高德 Web 端 JS API Key
@@ -106,7 +106,7 @@ var CONFIG = {
   GIST_API_URL: "https://api.github.com/gists/你的GistId",
   POLL_MS: 10000,                  // 默认轮询间隔
   OFFLINE_AFTER_S: 600,            // 超时判离线（孩子端静止 5 分钟心跳，容忍 2 个周期）
-  PASSWORD_HASH: "7a07041cc2aa7654ee4623a8f7a3b7f8ebd3ada6371c483eaa28c65c4a8cf644"
+  PASSWORD_HASH: "1e4e3e5261e01887e5b743cdd1fa4e660853cb1c3378083f6cbffa2cf854f7a8"
 };
 
 /* ---------------- URL 参数覆盖（供 parent_viewer_app 注入配置） ----------------
