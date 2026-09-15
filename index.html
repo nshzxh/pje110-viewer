@@ -105,7 +105,7 @@ var CONFIG = {
   GIST_RAW_URL: "https://gist.githubusercontent.com/你的GitHub用户名/gistId/raw/position.json",
   GIST_API_URL: "https://api.github.com/gists/你的GistId",
   POLL_MS: 10000,                  // 默认轮询间隔
-  OFFLINE_AFTER_S: 180,            // 超时判离线（与 APP 端 OFFLINE_AFTER_S 一致）
+  OFFLINE_AFTER_S: 600,            // 超时判离线（孩子端静止 5 分钟心跳，容忍 2 个周期）
   PASSWORD_HASH: "7a07041cc2aa7654ee4623a8f7a3b7f8ebd3ada6371c483eaa28c65c4a8cf644"
 };
 
