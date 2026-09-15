@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PJE110 位置查看端</title>
+<!-- PWA：手机浏览器"添加到主屏幕"后全屏打开 -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0D1117">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+:root{
+  --bg:#0D1117; --surface:#161B22; --alt:#1F2630; --line:#30363D;
+  --txt:#E6EDF3; --sub:#8B949E; --accent:#58A6FF; --danger:#F85149; --ok:#3FB950;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;background:var(--bg);color:var(--txt);
+  font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+#map{position:fixed;inset:0;z-index:0}
+#panel{position:fixed;top:12px;left:12px;z-index:1000;width:290px;max-width:calc(100vw - 24px);
+  background:rgba(22,27,34,.94);border:1px solid var(--line);border-radius:10px;padding:12px}
+#panel h1{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}
+#panel h1 .dot{width:10px;height:10px;border-radius:50%;background:var(--sub);flex:none}
+#panel h1 .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+#panel h1 .dot.off{background:var(--danger);box-shadow:0 0 8px var(--danger)}
+#status{font-size:12px;color:var(--sub);margin:2px 0 8px}
+.kv{display:grid;grid-template-columns:64px 1fr;gap:4px 8px;font-size:12px;margin-top:6px}
+.kv b{color:var(--sub);font-weight:400}
+.kv span{font-family:ui-monospace,Consolas,monospace;color:var(--txt);word-break:break-all}
+#cfg{margin-top:10px;border-top:1px solid var(--line);padding-top:8px;font-size:12px;color:var(--sub)}
+#cfg label{display:flex;align-items:center;justify-content:space-between;margin-top:6px}
+#cfg input,#cfg select{background:var(--alt);border:1px solid var(--line);color:var(--txt);
+  border-radius:5px;padding:3px 6px;width:150px;font-size:12px}
+#cfg button{background:var(--accent);color:#04101f;border:0;border-radius:5px;
+  padding:4px 12px;margin-top:8px;font-size:12px;cursor:pointer}
+#lock{position:fixed;inset:0;z-index:2000;background:rgba(6,9,13,.97);display:flex;
+  flex-direction:column;align-items:center;justify-content:center;gap:16px}
+#lock .logo{font-size:40px}
+#lock h2{font-size:18px}
+#lock input{background:var(--alt);border:1px solid var(--line);color:var(--txt);
+  border-radius:8px;padding:10px 14px;width:240px;font-size:15px;text-align:center}
+#lock button{background:var(--accent);color:#04101f;border:0;border-radius:8px;
+  padding:10px 34px;font-size:14px;cursor:pointer}
+#lock .err{color:var(--danger);font-size:13px;min-height:18px}
+#lock.shake input{border-color:var(--danger);animation:sh .3s}
+@keyframes sh{25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+.hide{display:none!important}
+.amap-logo,.amap-copyright{opacity:.45}
+</style>
+</head>
+<body>
+
+<!-- 密码锁 -->
+<div id="lock">
+  <div class="logo">🛡️</div>
+  <h2>PJE110 位置查看端</h2>
+  <input id="pw" type="password" placeholder="请输入访问密码" autocomplete="off">
+  <button id="unlock">解锁</button>
+  <div class="err" id="pwErr"></div>
+</div>
+
+<!-- 地图 + 信息面板 -->
+<div id="map"></div>
+<div id="panel">
+  <h1><span class="dot" id="dot"></span>PJE110 实时位置</h1>
+  <div id="status">未连接</div>
+  <div class="kv">
+    <b>经度</b><span id="vLon">—</span>
+    <b>纬度</b><span id="vLat">—</span>
+    <b>海拔</b><span id="vAlt">—</span>
+    <b>精度</b><span id="vAcc">—</span>
+    <b>速度</b><span id="vSpeed">—</span>
+    <b>时间</b><span id="vTs">—</span>
+    <b>状态</b><span id="vStatus">—</span>
+    <b>更新</b><span id="vUpdated">—</span>
+  </div>
+  <div id="cfg">
+    <label>轮询间隔 <input id="pollMs" type="number" min="3000" value="10000"> 毫秒</label>
+    <label>地图样式 <select id="mapStyle">
+      <option value="light">浅色（高德）</option>
+      <option value="dark" selected>深色（高德）</option>
+    </select></label>
+    <button id="btnApply">应用设置</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+ * PJE110 位置查看端（纯静态单文件，零服务器 · 高德地图版）
+ * 使用前请修改下方 CONFIG：
+ *   1) AMAP_KEY / AMAP_SECURITY_CODE —— 高德开放平台 Web 端 JS API 2.0
+ *      （Key 免费申请；安全密钥见 docs/02 教程）
+ *   2) GIST_RAW_URL —— 公开 Gist 的 position.json 直链（推荐，轻量）
+ *   3) GIST_API_URL —— 兜底：GitHub API（gistId 部分）
+ *   4) PASSWORD_HASH —— sha256(密码)，留空则关闭密码锁
+ *      默认密码 pje110，其哈希已预置
+ * ============================================================ */
+var CONFIG = {
+  AMAP_KEY: "",                    // 高德 Web 端 JS API Key
+  AMAP_SECURITY_CODE: "",          // 高德安全密钥（jscode）
+  GIST_RAW_URL: "https://gist.githubusercontent.com/你的GitHub用户名/gistId/raw/position.json",
+  GIST_API_URL: "https://api.github.com/gists/你的GistId",
+  POLL_MS: 10000,                  // 默认轮询间隔
+  OFFLINE_AFTER_S: 180,            // 超时判离线（与 APP 端 OFFLINE_AFTER_S 一致）
+  PASSWORD_HASH: "7a07041cc2aa7654ee4623a8f7a3b7f8ebd3ada6371c483eaa28c65c4a8cf644"
+};
+
+/* ---------------- 密码锁 ---------------- */
+var unlocked = sessionStorage.getItem("opsec_unlocked") === "1";
+if (!CONFIG.PASSWORD_HASH) unlocked = true;
+var lockEl = document.getElementById("lock");
+if (unlocked) lockEl.classList.add("hide");
+else lockEl.classList.remove("hide");
+
+async function sha256hex(s) {
+  var d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(d)).map(function(b){return b.toString(16).padStart(2,"0")}).join("");
+}
+
+document.getElementById("unlock").addEventListener("click", async function () {
+  var pw = document.getElementById("pw").value;
+  var h = await sha256hex(pw);
+  if (h === CONFIG.PASSWORD_HASH) {
+    sessionStorage.setItem("opsec_unlocked", "1");
+    lockEl.classList.add("hide");
+    startPolling();
+  } else {
+    var err = document.getElementById("pwErr");
+    lockEl.classList.remove("shake"); void lockEl.offsetWidth; lockEl.classList.add("shake");
+    err.textContent = "密码错误";
+  }
+});
+document.getElementById("pw").addEventListener("keydown", function(e){
+  if (e.key === "Enter") document.getElementById("unlock").click();
+});
+
+/* ---------------- 高德地图（动态加载，未配 Key 则提示） ---------------- */
+var map = null, marker = null, trail = null;
+var points = [];   // 轨迹：[lng, lat]
+
+function setStatusText(t) { document.getElementById("status").textContent = t; }
+
+if (CONFIG.AMAP_KEY) {
+  // 高德 v2.0 安全密钥必须在加载 API 前注入
+  window._AMapSecurityConfig = { securityJsCode: CONFIG.AMAP_SECURITY_CODE };
+  var api = document.createElement("script");
+  api.src = "https://webapi.amap.com/maps?v=2.0&key=" + encodeURIComponent(CONFIG.AMAP_KEY);
+  api.onload = initMap;
+  api.onerror = function () {
+    setStatusText("高德地图加载失败：检查 Key / 网络（如未申请 Key 请阅读 docs/02 教程）");
+  };
+  document.head.appendChild(api);
+} else {
+  setStatusText("未配置高德 Key，请阅读 docs/02 教程申请后填入 CONFIG.AMAP_KEY");
+}
+
+function initMap() {
+  map = new AMap.Map("map", {
+    zoom: 8,
+    center: [114.3, 30.5],
+    mapStyle: "amap://styles/dark",
+    viewMode: "2D"
+  });
+  marker = new AMap.Marker({
+    position: [114.3, 30.5],
+    anchor: "center",
+    content: '<div style="width:14px;height:14px;border-radius:50%;' +
+             'background:#58A6FF;border:2px solid #fff;box-shadow:0 0 8px #58A6FF"></div>'
+  });
+  map.add(marker);
+  trail = new AMap.Polyline({
+    path: [],
+    strokeColor: "#58A6FF",
+    strokeWeight: 3,
+    strokeOpacity: 0.8,
+    lineJoin: "round"
+  });
+  map.add(trail);
+  if (unlocked) startPolling();
+}
+
+/* ---------------- 数据轮询 ---------------- */
+var timer = null;
+var lastTs = 0;
+
+function startPolling() {
+  if (timer) clearInterval(timer);
+  fetchPosition();
+  timer = setInterval(fetchPosition, Math.max(3000, +document.getElementById("pollMs").value || CONFIG.POLL_MS));
+}
+
+function fetchPosition() {
+  var raw = CONFIG.GIST_RAW_URL;
+  fetch(raw, { cache: "no-store" })
+    .then(function (r) {
+      if (!r.ok) throw new Error("raw " + r.status);
+      return r.json();
+    })
+    .catch(function () {   // 兜底走 GitHub API（公开 gist 免鉴权）
+      return fetch(CONFIG.GIST_API_URL, { cache: "no-store" })
+        .then(function (r) { if (!r.ok) throw new Error("api " + r.status); return r.json(); })
+        .then(function (j) {
+          var f = j.files && j.files["position.json"];
+          if (!f) throw new Error("no position.json");
+          return JSON.parse(f.content);
+        });
+    })
+    .then(render)
+    .catch(function (e) { setOffline("获取失败: " + e.message); });
+}
+
+function render(p) {
+  var lat = +p.lat, lon = +p.lon, ts = +p.timestamp;
+  if (!isFinite(lat) || !isFinite(lon)) throw new Error("bad data");
+  lastTs = ts;
+  document.getElementById("dot").className = "dot on";
+  document.getElementById("status").textContent = "在线 · " + p.status + " · 共 " + points.length + " 个轨迹点";
+
+  document.getElementById("vLon").textContent = lon.toFixed(6);
+  document.getElementById("vLat").textContent = lat.toFixed(6);
+  document.getElementById("vAlt").textContent = (+p.alt || 0).toFixed(1) + " m";
+  document.getElementById("vAcc").textContent = (+p.accuracy || 0).toFixed(1) + " m";
+  document.getElementById("vSpeed").textContent = (+p.speed || 0).toFixed(1) + " m/s";
+  document.getElementById("vTs").textContent = fmtTime(ts);
+  document.getElementById("vStatus").textContent = p.status || "online";
+  document.getElementById("vUpdated").textContent = fmtTime(Date.now());
+
+  if (!map) return;
+  marker.setPosition([lon, lat]);
+  points.push([lon, lat]);
+  if (points.length > 500) points.shift();
+  trail.setPath(points);
+  if (points.length === 1) map.setZoomAndCenter(15, [lon, lat]);
+  else map.panTo([lon, lat]);
+}
+
+function setOffline(msg) {
+  document.getElementById("dot").className = "dot off";
+  document.getElementById("status").textContent = "离线 · " + msg;
+}
+
+/* 离线判定：超过阈值无新数据 */
+setInterval(function () {
+  if (lastTs && Date.now() - lastTs > CONFIG.OFFLINE_AFTER_S * 1000) {
+    document.getElementById("dot").className = "dot off";
+    document.getElementById("status").textContent = "离线 · " +
+      (Math.floor((Date.now() - lastTs) / 1000)) + "s 未更新";
+  }
+}, 5000);
+
+function fmtTime(t) {
+  if (!t) return "—";
+  var d = new Date(t);
+  var p = function (n){ return n < 10 ? "0" + n : "" + n; };
+  return d.getFullYear() + "-" + p(d.getMonth()+1) + "-" + p(d.getDate()) +
+    " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+}
+
+/* ---------------- 设置 ---------------- */
+document.getElementById("btnApply").addEventListener("click", function () {
+  if (map) {
+    var style = document.getElementById("mapStyle").value;
+    map.setMapStyle("amap://styles/" + style);
+  }
+  startPolling();
+});
+
+if (unlocked && map) startPolling();
+
+/* ---------------- PWA：注册 Service Worker（需 HTTPS/GitHub Pages） ---------------- */
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(function () { /* file:// 或受限环境静默跳过 */ });
+}
+</script>
+</body>
+</html>
