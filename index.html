@@ -120,6 +120,9 @@ var CONFIG = {
   if (q.has("gist_api")) CONFIG.GIST_API_URL = q.get("gist_api");
   if (q.has("pw_hash")) CONFIG.PASSWORD_HASH = q.get("pw_hash");
   if (q.has("poll")) CONFIG.POLL_MS = parseInt(q.get("poll"), 10) || CONFIG.POLL_MS;
+  // 让面板轮询输入框同步 URL 注入的间隔（否则 input 的 HTML 默认值优先）
+  var el = document.getElementById("pollMs");
+  if (el && q.has("poll")) el.value = CONFIG.POLL_MS;
 })();
 
 /* ---------------- 密码锁 ---------------- */
