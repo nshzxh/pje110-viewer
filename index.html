@@ -23,10 +23,15 @@ html,body{height:100%;background:var(--bg);color:var(--txt);
 #map{position:fixed;inset:0;z-index:0}
 #panel{position:fixed;top:12px;left:12px;z-index:1000;width:290px;max-width:calc(100vw - 24px);
   background:rgba(22,27,34,.94);border:1px solid var(--line);border-radius:10px;padding:12px}
-#panel h1{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}
+#panel h1{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px;cursor:pointer}
 #panel h1 .dot{width:10px;height:10px;border-radius:50%;background:var(--sub);flex:none}
 #panel h1 .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
 #panel h1 .dot.off{background:var(--danger);box-shadow:0 0 8px var(--danger)}
+#panel h1 .fold{margin-left:auto;color:var(--sub);font-size:12px;user-select:none;
+  border:1px solid var(--line);border-radius:5px;padding:1px 8px;background:var(--alt)}
+#panelBody{margin-top:2px}
+#panel.folded #panelBody{display:none}
+#panel.folded{width:auto;padding:8px 12px}
 #status{font-size:12px;color:var(--sub);margin:2px 0 8px}
 .kv{display:grid;grid-template-columns:64px 1fr;gap:4px 8px;font-size:12px;margin-top:6px}
 .kv b{color:var(--sub);font-weight:400}
@@ -50,6 +55,39 @@ html,body{height:100%;background:var(--bg);color:var(--txt);
 @keyframes sh{25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
 .hide{display:none!important}
 .amap-logo,.amap-copyright{opacity:.45}
+
+/* ---------------- 地图定位点：头像 + 名称标签 ---------------- */
+.pin{display:flex;flex-direction:column;align-items:center;transform:translateY(7px)}
+.pin .tag{display:flex;align-items:center;gap:4px;background:rgba(13,17,23,.92);
+  border:1px solid var(--accent);border-radius:14px;padding:2px 8px 2px 3px;
+  margin-bottom:5px;white-space:nowrap;user-select:none;-webkit-user-select:none;
+  cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.5)}
+.pin .tag.sel{border-color:var(--ok);box-shadow:0 0 10px rgba(63,185,80,.6)}
+.pin .av{width:22px;height:22px;border-radius:50%;background:var(--alt);
+  display:flex;align-items:center;justify-content:center;font-size:15px;overflow:hidden;flex:none}
+.pin .av img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+.pin .nm{font-size:12px;color:var(--txt);max-width:88px;overflow:hidden;
+  text-overflow:ellipsis}
+.pin .pt{width:14px;height:14px;border-radius:50%;background:var(--accent);
+  border:2px solid #fff;box-shadow:0 0 8px var(--accent)}
+
+/* ---------------- 长按编辑弹窗 ---------------- */
+#edit{position:fixed;inset:0;z-index:3000;background:rgba(6,9,13,.8);
+  display:flex;align-items:center;justify-content:center}
+#edit .box{background:var(--surface);border:1px solid var(--line);border-radius:12px;
+  padding:16px;width:300px;max-width:calc(100vw - 32px)}
+#edit h3{font-size:15px;margin-bottom:10px}
+#edit .lbl{font-size:12px;color:var(--sub);margin:10px 0 4px}
+#edit input{background:var(--alt);border:1px solid var(--line);color:var(--txt);
+  border-radius:6px;padding:8px 10px;width:100%;font-size:13px}
+#edit .emj{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:6px}
+#edit .emj span{font-size:20px;text-align:center;padding:4px 0;border-radius:6px;
+  border:1px solid transparent;cursor:pointer}
+#edit .emj span.on{border-color:var(--accent);background:var(--alt)}
+#edit .row{display:flex;gap:10px;margin-top:14px}
+#edit .row button{flex:1;border:0;border-radius:8px;padding:9px 0;font-size:13px;cursor:pointer}
+#edit .ok{background:var(--accent);color:#04101f}
+#edit .cancel{background:var(--alt);color:var(--txt);border:1px solid var(--line)}
 </style>
 </head>
 <body>
@@ -66,7 +104,9 @@ html,body{height:100%;background:var(--bg);color:var(--txt);
 <!-- 地图 + 信息面板 -->
 <div id="map"></div>
 <div id="panel">
-  <h1><span class="dot" id="dot"></span>PJE110 实时位置</h1>
+  <h1 id="panelHead"><span class="dot" id="dot"></span><span id="selName">实时位置</span>
+    <span class="fold" id="btnFold">收起</span></h1>
+  <div id="panelBody">
   <div id="status">未连接</div>
   <div class="kv">
     <b>经度</b><span id="vLon">—</span>
@@ -86,15 +126,34 @@ html,body{height:100%;background:var(--bg);color:var(--txt);
     </select></label>
     <button id="btnApply">应用设置</button>
   </div>
+  </div>
+</div>
+
+<!-- 长按编辑：名称 + 头像 -->
+<div id="edit" class="hide">
+  <div class="box">
+    <h3>编辑设备标签</h3>
+    <div class="lbl">名称</div>
+    <input id="edName" maxlength="12" placeholder="如：大宝">
+    <div class="lbl">头像（点选 emoji，或填图片链接）</div>
+    <div class="emj" id="edEmojis"></div>
+    <div class="lbl">图片链接（选填，优先于 emoji）</div>
+    <input id="edUrl" placeholder="https://…/avatar.png">
+    <div class="row">
+      <button class="cancel" id="edCancel">取消</button>
+      <button class="ok" id="edSave">保存</button>
+    </div>
+  </div>
 </div>
 
 <script>
 /* ============================================================
- * PJE110 位置查看端（纯静态单文件，零服务器 · 高德地图版）
+ * PJE110 位置查看端（纯静态单文件，零服务器 · 高德地图版 · 多设备）
  * 使用前请修改下方 CONFIG：
  *   1) AMAP_KEY / AMAP_SECURITY_CODE —— 高德开放平台 Web 端 JS API 2.0
  *      （Key 免费申请；安全密钥见 docs/02 教程）
- *   2) GIST_RAW_URL —— 公开 Gist 的 position.json 直链（推荐，轻量）
+ *   2) GIST_RAW_URL —— 公开 Gist 的 position Raw 直链；
+ *      多设备用 | 连接（每台设备一条 position_<标识>.json）
  *   3) GIST_API_URL —— 兜底：GitHub API（gistId 部分）
  *   4) PASSWORD_HASH —— sha256(密码)，留空则关闭密码锁
  *      默认密码 215331，其哈希已预置
@@ -102,8 +161,8 @@ html,body{height:100%;background:var(--bg);color:var(--txt);
 var CONFIG = {
   AMAP_KEY: "",                    // 高德 Web 端 JS API Key
   AMAP_SECURITY_CODE: "",          // 高德安全密钥（jscode）
-  GIST_RAW_URL: "https://gist.githubusercontent.com/你的GitHub用户名/gistId/raw/position.json",
-  GIST_API_URL: "https://api.github.com/gists/你的GistId",
+  GIST_RAW_URL: "https://gist.githubusercontent.com/nshzxh/1de7f80daeee6b5c5885409654f2369d/raw/position_1.json",
+  GIST_API_URL: "https://api.github.com/gists/1de7f80daeee6b5c5885409654f2369d",
   POLL_MS: 10000,                  // 默认轮询间隔
   OFFLINE_AFTER_S: 600,            // 超时判离线（孩子端静止 5 分钟心跳，容忍 2 个周期）
   PASSWORD_HASH: "1e4e3e5261e01887e5b743cdd1fa4e660853cb1c3378083f6cbffa2cf854f7a8"
@@ -111,7 +170,8 @@ var CONFIG = {
 
 /* ---------------- URL 参数覆盖（供 parent_viewer_app 注入配置） ----------------
  * 用法：?amap_key=xxx&amap_sec=xxx&gist_raw=xxx&gist_api=xxx&pw_hash=xxx&poll=5000
- * 任意参数缺省则沿用上方默认值；未填任何参数时行为与之前完全一致。 */
+ * gist_raw 支持多条直链，用 | 连接（多设备）。
+ * 任意参数缺省则沿用上方默认值。 */
 (function () {
   var q = new URLSearchParams(location.search);
   if (q.has("amap_key")) CONFIG.AMAP_KEY = q.get("amap_key");
@@ -154,12 +214,43 @@ document.getElementById("pw").addEventListener("keydown", function(e){
   if (e.key === "Enter") document.getElementById("unlock").click();
 });
 
-/* ---------------- 高德地图（动态加载，未配 Key 则提示） ---------------- */
-var map = null, marker = null, trail = null;
-var points = [];   // 轨迹：[lng, lat]
+/* ---------------- 面板折叠（隐藏/弹出实时位置信息） ---------------- */
+var panelEl = document.getElementById("panel");
+var btnFold = document.getElementById("btnFold");
+btnFold.addEventListener("click", function (e) {
+  e.stopPropagation();
+  panelEl.classList.toggle("folded");
+  btnFold.textContent = panelEl.classList.contains("folded") ? "展开" : "收起";
+});
+document.getElementById("panelHead").addEventListener("click", function () {
+  if (panelEl.classList.contains("folded")) btnFold.click();
+});
+
+/* ---------------- 多设备状态 ----------------
+ * devices[key] = {key, rawUrl, fileName, name, avatar, lastTs, points:[],
+ *                 marker, trail, online, last:{payload}}
+ * key 优先取上报数据里的 device_id；无则用直链文件名。 */
+var devices = {};
+var selKey = null;          // 当前选中的设备（面板显示其详情）
+var map = null, firstFix = false;
+var EMOKIT = ["🧒","👦","👧","👨‍🎓","👩‍🎓","🧑","👶","🦸","🐱","🐶","🦊","⭐"];
+
+function loadPins() {
+  try { return JSON.parse(localStorage.getItem("opsec_pins") || "{}"); }
+  catch (e) { return {}; }
+}
+function savePins(p) {
+  try { localStorage.setItem("opsec_pins", JSON.stringify(p)); } catch (e) {}
+}
+function avatarHtml(a) {
+  if (a && a.indexOf("http") === 0)
+    return '<span class="av"><img src="' + a.replace(/"/g, "%22") + '"></span>';
+  return '<span class="av">' + (a || "🧒") + '</span>';
+}
 
 function setStatusText(t) { document.getElementById("status").textContent = t; }
 
+/* ---------------- 高德地图（动态加载，未配 Key 则提示） ---------------- */
 if (CONFIG.AMAP_KEY) {
   // 高德 v2.0 安全密钥必须在加载 API 前注入
   window._AMapSecurityConfig = { securityJsCode: CONFIG.AMAP_SECURITY_CODE };
@@ -181,37 +272,72 @@ function initMap() {
     mapStyle: "amap://styles/dark",
     viewMode: "2D"
   });
-  marker = new AMap.Marker({
-    position: [114.3, 30.5],
-    anchor: "center",
-    content: '<div style="width:14px;height:14px;border-radius:50%;' +
-             'background:#58A6FF;border:2px solid #fff;box-shadow:0 0 8px #58A6FF"></div>'
-  });
-  map.add(marker);
-  trail = new AMap.Polyline({
-    path: [],
-    strokeColor: "#58A6FF",
-    strokeWeight: 3,
-    strokeOpacity: 0.8,
-    lineJoin: "round"
-  });
-  map.add(trail);
+  // 为已存在的设备补建 marker/trail
+  for (var k in devices) ensureMarker(devices[k]);
   if (unlocked) startPolling();
 }
 
-/* ---------------- 数据轮询 ---------------- */
+function ensureMarker(d) {
+  if (!map || d.marker) return;
+  d.marker = new AMap.Marker({
+    position: [114.3, 30.5],
+    anchor: "bottom-center",
+    content: pinHtml(d)
+  });
+  d.marker.on("click", function () { selectDevice(d.key); });
+  map.add(d.marker);
+  d.trail = new AMap.Polyline({
+    path: [], strokeColor: "#58A6FF", strokeWeight: 3,
+    strokeOpacity: 0.8, lineJoin: "round"
+  });
+  map.add(d.trail);
+}
+
+/* 定位点 HTML：上方头像+名称标签（长按编辑），下方圆点；选中设备标签变绿框 */
+function pinHtml(d) {
+  return '<div class="pin"><div class="tag' + (d.key === selKey ? " sel" : "") +
+    '" data-dev="' + d.key + '">' +
+    avatarHtml(d.avatar) + '<span class="nm">' + esc(d.name) + '</span></div>' +
+    '<div class="pt"></div></div>';
+}
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c];
+  });
+}
+
+/* 刷新某个设备的 marker 样式（换名/换头像/选中态） */
+function refreshMarker(d) {
+  if (d.marker) d.marker.setContent(pinHtml(d));
+}
+
+/* ---------------- 数据轮询（逐设备直链 → 失败走 API 兜底） ---------------- */
 var timer = null;
-var lastTs = 0;
 
 function startPolling() {
   if (timer) clearInterval(timer);
-  fetchPosition();
-  timer = setInterval(fetchPosition, Math.max(3000, +document.getElementById("pollMs").value || CONFIG.POLL_MS));
+  fetchAll();
+  timer = setInterval(fetchAll, Math.max(3000, +document.getElementById("pollMs").value || CONFIG.POLL_MS));
 }
 
-function fetchPosition() {
-  var raw = CONFIG.GIST_RAW_URL;
-  fetch(raw, { cache: "no-store" })
+function rawUrls() {
+  return (CONFIG.GIST_RAW_URL || "").split("|").map(function (s) { return s.trim(); })
+    .filter(function (s) { return s.length > 0; });
+}
+
+function fileNameOf(url) {
+  var seg = url.split("?")[0].split("/");
+  return seg[seg.length - 1] || "position.json";
+}
+
+function fetchAll() {
+  var urls = rawUrls();
+  if (!urls.length) { setOfflinePanel("未配置 Gist 直链"); return; }
+  urls.forEach(function (u, i) { fetchOne(u, i); });
+}
+
+function fetchOne(url, idx) {
+  fetch(url, { cache: "no-store" })
     .then(function (r) {
       if (!r.ok) throw new Error("raw " + r.status);
       return r.json();
@@ -220,51 +346,123 @@ function fetchPosition() {
       return fetch(CONFIG.GIST_API_URL, { cache: "no-store" })
         .then(function (r) { if (!r.ok) throw new Error("api " + r.status); return r.json(); })
         .then(function (j) {
-          var f = j.files && j.files["position.json"];
-          if (!f) throw new Error("no position.json");
+          var f = j.files && j.files[fileNameOf(url)];
+          if (!f || !f.content) throw new Error("no " + fileNameOf(url));
           return JSON.parse(f.content);
         });
     })
-    .then(render)
-    .catch(function (e) { setOffline("获取失败: " + e.message); });
+    .then(function (p) { render(p, url, idx); })
+    .catch(function (e) { markOffline(url, idx, e.message); });
 }
 
-function render(p) {
+function devKeyOf(p, url, idx) {
+  var id = p && (p.device_id || p.deviceId);
+  if (id) return String(id);
+  // 兼容旧数据：按文件名 / 直链序号区分
+  var m = fileNameOf(url).match(/position_?(.*)\.json/);
+  return (m && m[1]) ? m[1] : ("dev" + (idx + 1));
+}
+
+function render(p, url, idx) {
   var lat = +p.lat, lon = +p.lon, ts = +p.timestamp;
   if (!isFinite(lat) || !isFinite(lon)) throw new Error("bad data");
-  lastTs = ts;
-  document.getElementById("dot").className = "dot on";
-  document.getElementById("status").textContent = "在线 · " + p.status + " · 共 " + points.length + " 个轨迹点";
 
-  document.getElementById("vLon").textContent = lon.toFixed(6);
-  document.getElementById("vLat").textContent = lat.toFixed(6);
+  var key = devKeyOf(p, url, idx);
+  var pins = loadPins();
+  var d = devices[key];
+  if (!d) {
+    d = devices[key] = {
+      key: key, rawUrl: url, lastTs: 0, points: [], online: true, last: null,
+      name: (pins[key] && pins[key].name) || p.device_name ||
+            (key === "dev" + (idx + 1) ? "设备" + (idx + 1) : "设备 " + key),
+      avatar: (pins[key] && pins[key].avatar) || ""
+    };
+    ensureMarker(d);
+  }
+  d.last = p;
+  d.lastTs = ts;
+  d.online = true;
+  if (pins[key] && pins[key].name) d.name = pins[key].name;   // 本地改名优先
+  if (pins[key] && pins[key].avatar) d.avatar = pins[key].avatar;
+
+  // 地图：点位 + 轨迹
+  if (map && d.marker) {
+    d.marker.setPosition([lon, lat]);
+    refreshMarker(d);
+    d.points.push([lon, lat]);
+    if (d.points.length > 500) d.points.shift();
+    if (d.trail) d.trail.setPath(d.points);
+    // 第一个设备的第一个点 → 定位视野；选中设备更新时跟随平移
+    if (!firstFix) { firstFix = true; map.setZoomAndCenter(15, [lon, lat]); }
+    else if (key === selKey) map.panTo([lon, lat]);
+  }
+
+  // 默认选中第一个上报的设备
+  if (!selKey || !devices[selKey]) selectDevice(key);
+  else if (key === selKey) fillPanel(d);
+  updateStatusLine();
+}
+
+function selectDevice(key) {
+  if (!devices[key]) return;
+  selKey = key;
+  for (var k in devices) refreshMarker(devices[k]);   // 重建标签刷新选中态
+  fillPanel(devices[key]);
+}
+
+function fillPanel(d) {
+  var p = d.last || {};
+  document.getElementById("selName").textContent = d.name;
+  document.getElementById("dot").className = "dot " + (d.online ? "on" : "off");
+  document.getElementById("vLon").textContent = (+p.lon || 0).toFixed(6);
+  document.getElementById("vLat").textContent = (+p.lat || 0).toFixed(6);
   document.getElementById("vAlt").textContent = (+p.alt || 0).toFixed(1) + " m";
   document.getElementById("vAcc").textContent = (+p.accuracy || 0).toFixed(1) + " m";
   document.getElementById("vSpeed").textContent = (+p.speed || 0).toFixed(1) + " m/s";
-  document.getElementById("vTs").textContent = fmtTime(ts);
-  document.getElementById("vStatus").textContent = p.status || "online";
+  document.getElementById("vTs").textContent = fmtTime(d.lastTs);
+  document.getElementById("vStatus").textContent =
+    d.online ? (p.status || "online") : "离线";
   document.getElementById("vUpdated").textContent = fmtTime(Date.now());
-
-  if (!map) return;
-  marker.setPosition([lon, lat]);
-  points.push([lon, lat]);
-  if (points.length > 500) points.shift();
-  trail.setPath(points);
-  if (points.length === 1) map.setZoomAndCenter(15, [lon, lat]);
-  else map.panTo([lon, lat]);
 }
 
-function setOffline(msg) {
+function updateStatusLine() {
+  var all = Object.keys(devices).map(function (k) { return devices[k]; });
+  var onCnt = all.filter(function (d) { return d.online; }).length;
+  var parts = all.map(function (d) {
+    return d.name + (d.online ? "✓" : "✗");
+  });
+  setStatusText("在线 " + onCnt + "/" + all.length + " · " + parts.join(" / ") +
+    " · 点地图标签可切换/长按改头像");
+}
+
+function markOffline(url, idx, msg) {
+  // 找到该直链对应设备并标记离线（未建立设备的忽略）
+  for (var k in devices) {
+    if (devices[k].rawUrl === url) { devices[k].online = false; break; }
+  }
+  if (selKey && devices[selKey] && devices[selKey].rawUrl === url) fillPanel(devices[selKey]);
+  if (!Object.keys(devices).length) setOfflinePanel("获取失败: " + msg);
+  else updateStatusLine();
+}
+
+function setOfflinePanel(msg) {
   document.getElementById("dot").className = "dot off";
-  document.getElementById("status").textContent = "离线 · " + msg;
+  setStatusText("离线 · " + msg);
 }
 
-/* 离线判定：超过阈值无新数据 */
+/* 离线判定：逐设备超过阈值无新数据 */
 setInterval(function () {
-  if (lastTs && Date.now() - lastTs > CONFIG.OFFLINE_AFTER_S * 1000) {
-    document.getElementById("dot").className = "dot off";
-    document.getElementById("status").textContent = "离线 · " +
-      (Math.floor((Date.now() - lastTs) / 1000)) + "s 未更新";
+  var changed = false;
+  for (var k in devices) {
+    var d = devices[k];
+    if (d.online && d.lastTs &&
+        Date.now() - d.lastTs > CONFIG.OFFLINE_AFTER_S * 1000) {
+      d.online = false; changed = true;
+    }
+  }
+  if (changed) {
+    if (selKey && devices[selKey]) fillPanel(devices[selKey]);
+    updateStatusLine();
   }
 }, 5000);
 
@@ -275,6 +473,82 @@ function fmtTime(t) {
   return d.getFullYear() + "-" + p(d.getMonth()+1) + "-" + p(d.getDate()) +
     " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
 }
+
+/* ---------------- 长按标签编辑名称/头像 ----------------
+ * 手机：长按 600ms；电脑：鼠标按住 600ms 或右键标签 */
+var editKey = null;
+var editBox = document.getElementById("edit");
+var lpTimer = null;
+
+function startLongPress(e, key) {
+  stopLongPress();
+  lpTimer = setTimeout(function () { openEditor(key); }, 600);
+}
+function stopLongPress() { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } }
+
+// 事件委托：标签由 marker.setContent 动态生成
+document.addEventListener("touchstart", function (e) {
+  var tag = e.target.closest && e.target.closest(".tag");
+  if (tag) startLongPress(e, tag.getAttribute("data-dev"));
+}, { passive: true });
+document.addEventListener("touchend", stopLongPress);
+document.addEventListener("touchmove", stopLongPress);
+document.addEventListener("mousedown", function (e) {
+  var tag = e.target.closest && e.target.closest(".tag");
+  if (tag) startLongPress(e, tag.getAttribute("data-dev"));
+});
+document.addEventListener("mouseup", stopLongPress);
+document.addEventListener("contextmenu", function (e) {
+  var tag = e.target.closest && e.target.closest(".tag");
+  if (tag) { e.preventDefault(); openEditor(tag.getAttribute("data-dev")); }
+});
+
+function openEditor(key) {
+  var d = devices[key];
+  if (!d) return;
+  editKey = key;
+  document.getElementById("edName").value = d.name;
+  document.getElementById("edUrl").value =
+    (d.avatar && d.avatar.indexOf("http") === 0) ? d.avatar : "";
+  var emjBox = document.getElementById("edEmojis");
+  emjBox.innerHTML = "";
+  EMOKIT.forEach(function (em) {
+    var s = document.createElement("span");
+    s.textContent = em;
+    if (d.avatar === em) s.className = "on";
+    s.addEventListener("click", function () {
+      Array.prototype.forEach.call(emjBox.children, function (c) { c.className = ""; });
+      s.className = "on";
+    });
+    emjBox.appendChild(s);
+  });
+  editBox.classList.remove("hide");
+}
+
+document.getElementById("edCancel").addEventListener("click", function () {
+  editBox.classList.add("hide"); editKey = null;
+});
+document.getElementById("edSave").addEventListener("click", function () {
+  var d = devices[editKey];
+  if (d) {
+    var name = document.getElementById("edName").value.trim() || d.name;
+    var url = document.getElementById("edUrl").value.trim();
+    var em = null;
+    Array.prototype.forEach.call(
+      document.getElementById("edEmojis").children, function (c) {
+        if (c.className === "on") em = c.textContent;
+      });
+    d.name = name;
+    d.avatar = url || em || "";
+    var pins = loadPins();
+    pins[editKey] = { name: d.name, avatar: d.avatar };
+    savePins(pins);
+    refreshMarker(d);
+    if (editKey === selKey) fillPanel(d);
+    updateStatusLine();
+  }
+  editBox.classList.add("hide"); editKey = null;
+});
 
 /* ---------------- 设置 ---------------- */
 document.getElementById("btnApply").addEventListener("click", function () {

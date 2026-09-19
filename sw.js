@@ -1,6 +1,6 @@
 /* PJE110 位置查看端 · 极简 Service Worker
  * 仅缓存本站静态资源；Gist / 高德请求走网络（不缓存，保证实时性） */
-var CACHE = "opsec-viewer-v2";
+var CACHE = "opsec-viewer-v3";
 var PRECACHE = [
   "./",
   "./index.html",
