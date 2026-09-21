@@ -88,6 +88,47 @@ html,body{height:100%;background:var(--bg);color:var(--txt);
 #edit .row button{flex:1;border:0;border-radius:8px;padding:9px 0;font-size:13px;cursor:pointer}
 #edit .ok{background:var(--accent);color:#04101f}
 #edit .cancel{background:var(--alt);color:var(--txt);border:1px solid var(--line)}
+
+/* ---------------- 历史轨迹面板 ---------------- */
+#hist{margin-top:10px;border-top:1px solid var(--line);padding-top:8px;font-size:12px;color:var(--sub)}
+#hist .h{display:flex;align-items:center;justify-content:space-between;cursor:pointer;
+  color:var(--txt);font-weight:500}
+#hist .h .chev{color:var(--sub);font-size:11px;border:1px solid var(--line);
+  border-radius:5px;padding:1px 8px;background:var(--alt)}
+#hist .bd{margin-top:8px;display:none}
+#hist.open .bd{display:block}
+#hist .row{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+#hist button{background:var(--alt);color:var(--txt);border:1px solid var(--line);
+  border-radius:5px;padding:3px 9px;font-size:11px;cursor:pointer}
+#hist button.on{background:var(--accent);color:#04101f;border-color:var(--accent)}
+#hist button.go{background:var(--ok);color:#04101f;border-color:var(--ok)}
+#hist button.dn{background:var(--danger);color:#fff;border-color:var(--danger)}
+#hist input[type=date]{background:var(--alt);border:1px solid var(--line);color:var(--txt);
+  border-radius:5px;padding:3px 6px;font-size:11px;width:calc(50% - 6px)}
+#hist .meta{margin-top:6px;color:var(--sub);font-size:11px}
+#hist .meta b{color:var(--txt);font-weight:500}
+#hist .bar{margin-top:6px;display:flex;align-items:center;gap:8px}
+#hist .bar input[type=range]{flex:1;accent-color:var(--accent)}
+#hist .bar .t{font-size:11px;color:var(--sub);font-family:ui-monospace,Consolas,monospace;
+  white-space:nowrap;min-width:120px;text-align:right}
+#hist #histSeg{min-height:14px}
+#hist #histSum{margin-top:4px}
+#histStays{max-height:150px;overflow-y:auto;margin-top:4px;border:1px solid var(--line);
+  border-radius:6px;background:rgba(31,38,48,.5)}
+#histStays:empty{display:none}
+#histStays .srow{padding:5px 8px;border-bottom:1px solid var(--line);font-size:11px;
+  line-height:1.5;color:var(--txt)}
+#histStays .srow:last-child{border-bottom:0}
+#histStays .srow .nm{color:var(--accent)}
+#histStays .srow .dur{color:var(--ok);font-family:ui-monospace,Consolas,monospace}
+#histStays .srow .live{color:var(--ok);font-size:10px;border:1px solid var(--ok);
+  border-radius:4px;padding:0 4px;margin-left:4px}
+
+/* 停留叠加层：圆圈 + 时间标签 */
+.stayTag{background:rgba(13,17,23,.92);border:1px solid #F0883E;border-radius:10px;
+  padding:1px 7px;font-size:11px;color:var(--txt);white-space:nowrap;
+  box-shadow:0 2px 8px rgba(0,0,0,.5);transform:translateY(-4px)}
+.gapSeg{stroke-color:#8B949E}
 </style>
 </head>
 <body>
@@ -125,6 +166,42 @@ html,body{height:100%;background:var(--bg);color:var(--txt);
       <option value="dark" selected>深色（高德）</option>
     </select></label>
     <button id="btnApply">应用设置</button>
+  </div>
+
+  <!-- 历史轨迹（IndexedDB 落库 + 日期选择 + 播放） -->
+  <div id="hist">
+    <div class="h" id="histHead"><span>历史轨迹</span><span class="chev" id="histChev">展开</span></div>
+    <div class="bd">
+      <div class="row" id="histRanges">
+        <button data-range="today" class="on">今日</button>
+        <button data-range="yesterday">昨日</button>
+        <button data-range="3d">近 3 天</button>
+        <button data-range="7d">近 7 天</button>
+        <button data-range="custom">自定义</button>
+      </div>
+      <div class="row" id="histDates">
+        <input type="date" id="histFrom">
+        <input type="date" id="histTo">
+      </div>
+      <div class="row">
+        <button id="histQuery" class="go">查询</button>
+        <button id="histClear" class="dn">清空全部历史</button>
+      </div>
+      <div class="meta" id="histMeta">未查询</div>
+      <div class="meta" id="histSum"></div>
+      <div id="histStays"></div>
+      <div class="bar">
+        <button id="histPlay">▶</button>
+        <input type="range" id="histSeek" min="0" max="0" value="0">
+        <span class="t" id="histTime">—</span>
+      </div>
+      <div class="meta" id="histSeg"></div>
+      <div class="row">
+        <button id="histGpx">导出 GPX</button>
+        <button id="histCsv">导出 CSV</button>
+        <button id="histLive" style="margin-left:auto">返回实时模式</button>
+      </div>
+    </div>
   </div>
   </div>
 </div>
@@ -313,11 +390,43 @@ function refreshMarker(d) {
 
 /* ---------------- 数据轮询（逐设备直链 → 失败走 API 兜底） ---------------- */
 var timer = null;
+var histSyncTimer = null;
 
 function startPolling() {
   if (timer) clearInterval(timer);
+  if (histSyncTimer) clearInterval(histSyncTimer);
   fetchAll();
   timer = setInterval(fetchAll, Math.max(3000, +document.getElementById("pollMs").value || CONFIG.POLL_MS));
+  // 云端历史同步：启动拉一次 + 每 10 分钟刷新（原始 raw 有 ~5min CDN 缓存，更高频无意义）
+  syncCloudHistory();
+  histSyncTimer = setInterval(syncCloudHistory, 10 * 60 * 1000);
+}
+
+/* ---------------- 云端历史同步（hist_<标识>.json） ----------------
+ * 孩子端每次上报随 position 同请求滚动写入 hist_<deviceId>.json
+ * （最近 200 点，家长端不在线期间的位置不再丢失）。
+ * 此处拉取后合并进 IndexedDB，本地实时捕获的点与云端点按 (dev,ts) 去重。 */
+function histUrlOf(url) {
+  return url.replace(/position_/, "hist_").replace(/position\.json/, "hist.json");
+}
+
+function syncCloudHistory() {
+  rawUrls().forEach(function (u, i) {
+    fetch(histUrlOf(u), { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error("hist " + r.status); return r.json(); })
+      .then(function (arr) {
+        if (!Array.isArray(arr) || !arr.length) return;
+        openDB().then(function () {
+          arr.forEach(function (p) {
+            var ts = +p.timestamp;
+            if (!isFinite(ts) || !isFinite(+p.lat) || !isFinite(+p.lon)) return;
+            upsertPoint(devKeyOf(p, u, i), ts, +p.lat, +p.lon,
+              p.alt, p.accuracy, p.speed, p.status, p.t, p.stay);
+          });
+        });
+      })
+      .catch(function () { /* 老版本孩子端无 hist 文件：静默跳过 */ });
+  });
 }
 
 function rawUrls() {
@@ -384,6 +493,16 @@ function render(p, url, idx) {
   d.online = true;
   if (pins[key] && pins[key].name) d.name = pins[key].name;   // 本地改名优先
   if (pins[key] && pins[key].avatar) d.avatar = pins[key].avatar;
+
+  // 落库到 IndexedDB（按 dev+ts 去重；histMode 也持续入库，下次查询即包含）
+  upsertPoint(key, ts, lat, lon, p.alt, p.accuracy, p.speed, p.status, p.t, p.stay);
+
+  // 历史模式：跳过实时地图更新，避免覆盖历史轨迹视图
+  if (histMode) {
+    if (key === selKey) fillPanel(d);
+    updateStatusLine();
+    return;
+  }
 
   // 地图：点位 + 轨迹
   if (map && d.marker) {
@@ -560,6 +679,506 @@ document.getElementById("btnApply").addEventListener("click", function () {
 });
 
 if (unlocked && map) startPolling();
+
+/* ============================================================
+ * IndexedDB 历史轨迹落库（方案 B）
+ * ------------------------------------------------------------
+ * 每次拉到的位置点入库，复合主键 (dev, ts) 去重，避免重复存储。
+ * 容量几乎无限（500MB+），保留 90 天历史用于轨迹回放。
+ *
+ * 天然限制：孩子端覆盖式上报，家长端 APP 长时间不打开期间的位置
+ * 会被后续覆盖丢失，本地无对应历史。本端只能落库每次成功拉到的点。
+ * ============================================================ */
+var DB_NAME = "opsec_tracks";
+var DB_VER = 1;
+var db = null;
+
+function openDB() {
+  if (db) return Promise.resolve(db);
+  if (!("indexedDB" in window)) { console.warn("IDB not supported"); return Promise.resolve(null); }
+  return new Promise(function (resolve) {
+    var req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = function (e) {
+      var d = e.target.result;
+      if (!d.objectStoreNames.contains("points")) {
+        var os = d.createObjectStore("points", { keyPath: ["dev", "ts"] });
+        os.createIndex("dev", "dev", { unique: false });
+        os.createIndex("ts", "ts", { unique: false });
+        os.createIndex("dev_ts", ["dev", "ts"], { unique: true });
+      }
+    };
+    req.onsuccess = function (e) { db = e.target.result; resolve(db); };
+    req.onerror = function (e) { console.warn("IDB open failed", e.target.error); resolve(null); };
+  });
+}
+
+/** UPSERT 一个点位（重复 ts 自动覆盖，达到去重）
+ *  t: m=移动 a=到达 l=离开 s=停留心跳（孩子端停留压缩标记，缺省视为 m）*/
+function upsertPoint(dev, ts, lat, lon, alt, acc, speed, status, t, stay) {
+  if (!db || !dev || !ts) return;
+  try {
+    var tx = db.transaction("points", "readwrite");
+    tx.objectStore("points").put({
+      dev: dev, ts: +ts, lat: +lat, lon: +lon,
+      alt: +alt || 0, acc: +acc || 0, speed: +speed || 0, status: status || "",
+      t: t || "m", stay: +stay || 0
+    });
+    tx.onerror = function () {};
+  } catch (e) {}
+}
+
+/** 按设备 + 时间范围查询所有点（按时间升序） */
+function queryPoints(dev, fromTs, toTs) {
+  if (!db) return Promise.resolve([]);
+  return new Promise(function (resolve) {
+    try {
+      var tx = db.transaction("points", "readonly");
+      var idx = tx.objectStore("points").index("dev_ts");
+      var range = IDBKeyRange.bound([dev, +fromTs], [dev, +toTs]);
+      var req = idx.getAll(range);
+      req.onsuccess = function () { resolve(req.result || []); };
+      req.onerror = function () { resolve([]); };
+    } catch (e) { resolve([]); }
+  });
+}
+
+/** 删除 ts < beforeTs 的所有点，返回删除数 */
+function pruneOld(beforeTs) {
+  if (!db) return Promise.resolve(0);
+  return new Promise(function (resolve) {
+    try {
+      var tx = db.transaction("points", "readwrite");
+      var idx = tx.objectStore("points").index("ts");
+      var req = idx.openCursor(IDBKeyRange.upperBound(+beforeTs));
+      var n = 0;
+      req.onsuccess = function (e) {
+        var c = e.target.result;
+        if (c) { c.delete(); n++; c.continue(); }
+        else resolve(n);
+      };
+      req.onerror = function () { resolve(n); };
+    } catch (e) { resolve(0); }
+  });
+}
+
+/* ============================================================
+ * 历史轨迹查询 / 播放 / 自动清理
+ * ============================================================ */
+var histMode = false;            // true = 历史视图，跳过实时地图更新但持续入库
+var histTrail = null;            // 历史轨迹 Polyline（橙色，区别于实时蓝色）
+var histGapTrail = null;         // 数据缺失段 Polyline（灰色虚线）
+var histMarker = null;           // 历史播放头 marker
+var histPoints = [];             // 当前查询结果（已剔除停留心跳 s）
+var histStaysArr = [];           // 停留配对 [{aTs,lTs,lat,lon,stays}]
+var histOverlays = [];           // 停留叠加层（圆圈+标签）
+var histPlayIdx = 0;
+var histPlayTimer = null;
+var GAP_MS = 15 * 60 * 1000;     // 记录间隔超此值视为数据缺失（关机/离线）
+
+function histInit() {
+  // 折叠头部
+  document.getElementById("histHead").addEventListener("click", function () {
+    var el = document.getElementById("hist");
+    el.classList.toggle("open");
+    document.getElementById("histChev").textContent =
+      el.classList.contains("open") ? "收起" : "展开";
+  });
+  // 范围按钮 → 自动填日期
+  document.getElementById("histRanges").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    Array.prototype.forEach.call(b.parentNode.children, function (c) { c.className = ""; });
+    b.className = "on";
+    setHistRange(b.getAttribute("data-range"));
+  });
+  document.getElementById("histQuery").addEventListener("click", queryHistory);
+  document.getElementById("histClear").addEventListener("click", clearHistory);
+  document.getElementById("histLive").addEventListener("click", exitHistMode);
+  document.getElementById("histGpx").addEventListener("click", function () { exportHist("gpx"); });
+  document.getElementById("histCsv").addEventListener("click", function () { exportHist("csv"); });
+  document.getElementById("histPlay").addEventListener("click", togglePlay);
+  document.getElementById("histSeek").addEventListener("input", function () {
+    seekHist(+this.value);
+  });
+  // 默认填"今日"
+  setHistRange("today");
+}
+
+function setHistRange(r) {
+  var from = document.getElementById("histFrom");
+  var to = document.getElementById("histTo");
+  var p = function (n) { return n < 10 ? "0" + n : "" + n; };
+  var fmtD = function (d) { return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()); };
+  var today = new Date(); today.setHours(0, 0, 0, 0);
+  if (r === "today") {
+    from.value = fmtD(today); to.value = fmtD(today);
+  } else if (r === "yesterday") {
+    var y = new Date(today.getTime() - 86400000);
+    from.value = fmtD(y); to.value = fmtD(y);
+  } else if (r === "3d") {
+    var d3 = new Date(today.getTime() - 2 * 86400000);
+    from.value = fmtD(d3); to.value = fmtD(today);
+  } else if (r === "7d") {
+    var d7 = new Date(today.getTime() - 6 * 86400000);
+    from.value = fmtD(d7); to.value = fmtD(today);
+  }
+  // custom 不动 from/to，让用户自填
+}
+
+async function queryHistory() {
+  if (!map) { setHistMeta("地图加载中，请稍候再试"); return; }
+  if (!selKey || !devices[selKey]) { setHistMeta("请先在地图上点选一个设备"); return; }
+  var fromD = document.getElementById("histFrom").value;
+  var toD = document.getElementById("histTo").value;
+  if (!fromD || !toD) { setHistMeta("请选择起止日期"); return; }
+  var fromTs = new Date(fromD + "T00:00:00").getTime();
+  var toTs = new Date(toD + "T23:59:59.999").getTime();
+  if (isNaN(fromTs) || isNaN(toTs)) { setHistMeta("日期格式无效"); return; }
+  if (fromTs > toTs) { setHistMeta("起始日期不能晚于结束日期"); return; }
+
+  enterHistMode();
+  setHistMeta("查询中…");
+  await openDB();
+  var all = await queryPoints(selKey, fromTs, toTs);
+  // 剔除停留心跳（t=s）：仅保留移动/到达/离开三类有效记录
+  histPoints = all.filter(function (p) { return (p.t || "m") !== "s"; });
+  drawHistTrail();
+  setHistMeta("设备 <b>" + esc(devices[selKey].name) + "</b> · 有效记录 <b>" +
+    histPoints.length + "</b> 条" +
+    (all.length > histPoints.length ? "（剔除停留心跳 " + (all.length - histPoints.length) + " 点）" : ""));
+  buildStays();
+  buildSummary();
+  // 重置播放
+  stopPlay();
+  histPlayIdx = 0;
+  var seek = document.getElementById("histSeek");
+  seek.max = Math.max(0, histPoints.length - 1);
+  seek.value = 0;
+  showHistPoint(0);
+}
+
+function enterHistMode() {
+  if (histMode) return;
+  histMode = true;
+  // 隐藏实时 marker 和 trail，避免覆盖历史视图
+  for (var k in devices) {
+    if (devices[k].marker) devices[k].marker.setMap(null);
+    if (devices[k].trail) devices[k].trail.setMap(null);
+  }
+  // 创建历史轨迹（橙色）、缺失段虚线和播放头
+  if (map && !histTrail) {
+    histTrail = new AMap.Polyline({
+      path: [], strokeColor: "#F0883E", strokeWeight: 4,
+      strokeOpacity: 0.85, lineJoin: "round"
+    });
+    histTrail.setMap(map);
+    histGapTrail = new AMap.Polyline({
+      path: [], strokeColor: "#8B949E", strokeWeight: 3,
+      strokeOpacity: 0.7, strokeStyle: "dashed"
+    });
+    histGapTrail.setMap(map);
+    histMarker = new AMap.Marker({
+      position: [114.3, 30.5],
+      anchor: "bottom-center",
+      content: '<div class="pin"><div class="pt" style="background:#F0883E;box-shadow:0 0 8px #F0883E"></div></div>'
+    });
+    histMarker.setMap(map);
+  }
+}
+
+function clearHistOverlays() {
+  histOverlays.forEach(function (o) { o.setMap && o.setMap(null); });
+  histOverlays = [];
+}
+
+function exitHistMode() {
+  if (!histMode) return;
+  histMode = false;
+  stopPlay();
+  if (histTrail) { histTrail.setMap(null); histTrail = null; }
+  if (histGapTrail) { histGapTrail.setMap(null); histGapTrail = null; }
+  if (histMarker) { histMarker.setMap(null); histMarker = null; }
+  clearHistOverlays();
+  histPoints = [];
+  histStaysArr = [];
+  document.getElementById("histStays").innerHTML = "";
+  document.getElementById("histSum").textContent = "";
+  document.getElementById("histSeg").textContent = "";
+  // 恢复实时 marker 和 trail
+  for (var k in devices) {
+    if (devices[k].marker) devices[k].marker.setMap(map);
+    if (devices[k].trail) devices[k].trail.setMap(map);
+  }
+  setHistMeta("已返回实时模式");
+}
+
+function drawHistTrail() {
+  if (!histTrail) return;
+  if (!histPoints.length) { histTrail.setPath([]); histGapTrail.setPath([]); return; }
+  var path = histPoints.map(function (p) { return [+p.lon, +p.lat]; });
+  histTrail.setPath(path);
+  // 数据缺失段（间隔 ≥15min 且不是"到达→离开"的停留段）：灰色虚线
+  var gaps = [];
+  for (var i = 1; i < histPoints.length; i++) {
+    var prev = histPoints[i - 1], cur = histPoints[i];
+    var dt = +cur.ts - +prev.ts;
+    if (dt >= GAP_MS && (prev.t || "m") !== "a") {
+      gaps.push([+prev.lon, +prev.lat], [+cur.lon, +cur.lat]);
+    }
+  }
+  histGapTrail.setPath(gaps);
+  map.setFitView([histTrail, histGapTrail]);
+}
+
+function showHistPoint(i) {
+  if (!histPoints.length || !histMarker) return;
+  i = Math.max(0, Math.min(i, histPoints.length - 1));
+  var p = histPoints[i];
+  histMarker.setPosition([+p.lon, +p.lat]);
+  document.getElementById("histTime").textContent =
+    fmtTime(+p.ts) + " · " + (+p.lat).toFixed(5) + "," + (+p.lon).toFixed(5);
+  // 段信息：类型 / 与上点间隔（缺失告警）/ 位移 / 均速
+  var seg = typeLabel(p.t);
+  var prev = i > 0 ? histPoints[i - 1] : null;
+  if (prev) {
+    var dt = +p.ts - +prev.ts;
+    var dd = distBetween(+prev.lat, +prev.lon, +p.lat, +p.lon);
+    var kind;
+    if (dt >= GAP_MS && (prev.t || "m") === "a") kind = "停留 " + fmtDur(dt);
+    else if (dt >= GAP_MS) kind = "⚠ 缺失 " + fmtDur(dt);
+    else kind = "间隔 " + fmtDur(dt);
+    var v = dt > 0 ? dd / (dt / 1000) : 0;
+    seg += " · " + kind + " · 移动 " + dd.toFixed(0) + "m · " + v.toFixed(1) + "m/s";
+  }
+  document.getElementById("histSeg").textContent = seg;
+  var seek = document.getElementById("histSeek");
+  if (+seek.value !== i) seek.value = i;
+}
+
+function typeLabel(t) {
+  return { m: "移动", a: "到达", l: "离开", s: "心跳" }[t || "m"] || "移动";
+}
+
+function fmtDur(ms) {
+  var s = Math.round(ms / 1000);
+  var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  if (h > 0) return h + "小时" + m + "分";
+  if (m > 0) return m + "分" + (ss >= 1 ? ss + "秒" : "");
+  return ss + "秒";
+}
+
+function distBetween(lat1, lon1, lat2, lon2) {
+  var r = 6371000;
+  var p1 = Math.PI * lat1 / 180, p2 = Math.PI * lat2 / 180;
+  var dp = Math.PI * (lat2 - lat1) / 180, dl = Math.PI * (lon2 - lon1) / 180;
+  var a = Math.sin(dp / 2) * Math.sin(dp / 2) +
+    Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+  return 2 * r * Math.asin(Math.sqrt(a));
+}
+
+function seekHist(i) {
+  histPlayIdx = i;
+  showHistPoint(i);
+}
+
+function togglePlay() {
+  if (histPlayTimer) stopPlay();
+  else startPlay();
+}
+
+function startPlay() {
+  if (!histPoints.length) return;
+  if (histPlayIdx >= histPoints.length - 1) histPlayIdx = 0;
+  document.getElementById("histPlay").textContent = "⏸";
+  // 固定步进 400ms（点数多时约相当于 2.5x 加速；用户可拖时间轴跳过）
+  histPlayTimer = setInterval(function () {
+    histPlayIdx++;
+    if (histPlayIdx >= histPoints.length) { stopPlay(); return; }
+    showHistPoint(histPlayIdx);
+  }, 400);
+}
+
+function stopPlay() {
+  if (histPlayTimer) { clearInterval(histPlayTimer); histPlayTimer = null; }
+  document.getElementById("histPlay").textContent = "▶";
+}
+
+async function clearHistory() {
+  if (!confirm("确认清空所有设备的历史轨迹？此操作不可撤销。")) return;
+  await openDB();
+  var n = await pruneOld(Date.now());   // before=now → 全部清空
+  setHistMeta("已清空 <b>" + n + "</b> 条历史记录");
+  if (histMode) {
+    histPoints = [];
+    histStaysArr = [];
+    if (histTrail) histTrail.setPath([]);
+    if (histGapTrail) histGapTrail.setPath([]);
+    clearHistOverlays();
+    var seek = document.getElementById("histSeek");
+    seek.max = 0; seek.value = 0;
+    document.getElementById("histTime").textContent = "—";
+    document.getElementById("histSeg").textContent = "";
+    document.getElementById("histSum").textContent = "";
+    document.getElementById("histStays").innerHTML = "";
+  }
+}
+
+function setHistMeta(html) {
+  document.getElementById("histMeta").innerHTML = html;
+}
+
+/* ---------------- 停留统计：到达/离开配对 → 列表 + 地图叠加层 ---------------- */
+function buildStays() {
+  clearHistOverlays();
+  histStaysArr = [];
+  var box = document.getElementById("histStays");
+  box.innerHTML = "";
+  var open = null;
+  histPoints.forEach(function (p) {
+    var t = p.t || "m";
+    if (t === "a") {
+      if (open) histStaysArr.push(open);        // 上一个停留缺"离开"，先收
+      open = { aTs: +p.ts, lTs: 0, lat: +p.lat, lon: +p.lon, stays: 0 };
+    } else if (t === "l") {
+      if (open) {
+        open.lTs = +p.ts;
+        open.stays = +p.stay || Math.round((open.lTs - open.aTs) / 1000);
+        histStaysArr.push(open);
+        open = null;
+      }
+      // 无到达的离开：忽略（前一停留已被收口）
+    }
+  });
+  if (open) histStaysArr.push(open);            // 停留中（无离开记录）
+
+  // 渲染列表 + 地图叠加层
+  histStaysArr.forEach(function (s, idx) {
+    var dur = s.lTs ? (s.stays || Math.round((s.lTs - s.aTs) / 1000)) : 0;
+    var timeTxt = fmtTime(s.aTs).slice(11) + " – " +
+      (s.lTs ? fmtTime(s.lTs).slice(11) : "…");
+    var row = document.createElement("div");
+    row.className = "srow";
+    row.innerHTML = "📍 <span class=\"nm\" id=\"stayNm" + idx + "\">" +
+      (+s.lat).toFixed(4) + "," + (+s.lon).toFixed(4) + "</span><br>" +
+      timeTxt + " · <span class=\"dur\">" +
+      (s.lTs ? "停留 " + fmtDur(dur * 1000) : "计算中") + "</span>" +
+      (s.lTs ? "" : '<span class="live">停留中</span>');
+    box.appendChild(row);
+
+    // 逆地理编码填充地名
+    regeoName(s.lon, s.lat, function (name) {
+      var el = document.getElementById("stayNm" + idx);
+      if (el && name) el.textContent = name;
+    });
+
+    // 地图：停留圈 + 时间标签
+    if (map) {
+      var circle = new AMap.Circle({
+        center: [s.lon, s.lat], radius: 50,
+        strokeColor: "#F0883E", strokeOpacity: 0.5, strokeWeight: 1,
+        fillColor: "#F0883E", fillOpacity: 0.08
+      });
+      circle.setMap(map);
+      var label = new AMap.Marker({
+        position: [s.lon, s.lat], anchor: "bottom-center",
+        content: '<div class="stayTag">' + timeTxt +
+          (s.lTs ? " · " + fmtDur(dur * 1000) : " · 停留中") + '</div>'
+      });
+      label.setMap(map);
+      histOverlays.push(circle, label);
+    }
+  });
+}
+
+/* ---------------- 日汇总：总距离 / 停留次数 / 时间跨度 ---------------- */
+function buildSummary() {
+  var el = document.getElementById("histSum");
+  if (!histPoints.length) { el.textContent = ""; return; }
+  var total = 0;
+  for (var i = 1; i < histPoints.length; i++) {
+    var prev = histPoints[i - 1], cur = histPoints[i];
+    var dt = +cur.ts - +prev.ts;
+    if (dt <= GAP_MS && (prev.t || "m") !== "a") {
+      total += distBetween(+prev.lat, +prev.lon, +cur.lat, +cur.lon);
+    }
+    // 停留段（到达→离开）与缺失段不计入移动距离
+  }
+  var span = fmtTime(+histPoints[0].ts).slice(11) + " – " +
+    fmtTime(+histPoints[histPoints.length - 1].ts).slice(11);
+  el.innerHTML = "移动 <b>" + (total / 1000).toFixed(2) + "</b> km · 停留 <b>" +
+    histStaysArr.length + "</b> 次 · 跨度 " + span;
+}
+
+/* ---------------- 逆地理编码：停留坐标 → 地名（localStorage 缓存） ---------------- */
+function regeoName(lng, lat, cb) {
+  var key = (+lat).toFixed(4) + "," + (+lng).toFixed(4);
+  var cache = {};
+  try { cache = JSON.parse(localStorage.getItem("opsec_regeo") || "{}"); } catch (e) {}
+  if (cache[key]) { cb(cache[key]); return; }
+  if (!CONFIG.AMAP_KEY || !window.AMap) { cb(null); return; }
+  AMap.plugin("AMap.Geocoder", function () {
+    try {
+      new AMap.Geocoder().getAddress([+lng, +lat], function (status, result) {
+        var name = null;
+        if (status === "complete" && result && result.regeocode)
+          name = result.regeocode.formattedAddress || null;
+        if (name) {
+          cache[key] = name;
+          try { localStorage.setItem("opsec_regeo", JSON.stringify(cache)); } catch (e) {}
+        }
+        cb(name);
+      });
+    } catch (e) { cb(null); }
+  });
+}
+
+/* ---------------- 轨迹导出：GPX / CSV ---------------- */
+function exportHist(kind) {
+  if (!histPoints.length) { setHistMeta("无可导出数据，请先查询"); return; }
+  var from = document.getElementById("histFrom").value;
+  var to = document.getElementById("histTo").value;
+  var fname = "opsec_" + selKey + "_" + from + "_" + to +
+    (kind === "csv" ? ".csv" : ".gpx");
+  var content, mime;
+  if (kind === "csv") {
+    var rows = ["time,lat,lon,alt_m,speed_mps,acc_m,type,stay_s"];
+    histPoints.forEach(function (p) {
+      rows.push([new Date(+p.ts).toISOString(), p.lat, p.lon, p.alt,
+        p.speed, p.acc, (p.t || "m"), p.stay || 0].join(","));
+    });
+    content = "\uFEFF" + rows.join("\n");
+    mime = "text/csv";
+  } else {
+    var pts = histPoints.map(function (p) {
+      return '      <trkpt lat="' + p.lat + '" lon="' + p.lon + '"><time>' +
+        new Date(+p.ts).toISOString() + '</time></trkpt>';
+    }).join("\n");
+    content = '<?xml version="1.0" encoding="UTF-8"?>\n' +
+      '<gpx version="1.1" creator="pje110-viewer"><trk><name>opsec ' +
+      esc(selKey) + '</name><trkseg>\n' + pts + '\n</trkseg></trk></gpx>';
+    mime = "application/gpx+xml";
+  }
+  var blob = new Blob([content], { type: mime });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+
+/** 启动后自动清理 90 天前的旧点（单次执行，无定时循环避免耗电） */
+async function autoPrune() {
+  await openDB();
+  var before = Date.now() - 90 * 86400000;
+  var n = await pruneOld(before);
+  if (n > 0) console.log("[hist] auto-prune deleted", n, "points older than 90d");
+}
+
+// 历史模式 UI 事件绑定（不依赖 DB，可立即初始化）
+histInit();
+// 解锁后异步初始化 DB + 自动清理（不解锁也需要查询/清空，但未解锁时不会触发）
+if (unlocked) { openDB().then(autoPrune); }
 
 /* ---------------- PWA：注册 Service Worker（需 HTTPS/GitHub Pages） ---------------- */
 if ("serviceWorker" in navigator) {
